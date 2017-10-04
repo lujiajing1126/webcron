@@ -1,15 +1,15 @@
 package mail
 
 import (
-	"fmt"
 	"github.com/astaxie/beego"
-	"github.com/astaxie/beego/utils"
 	"time"
+	"gopkg.in/gomail.v2"
 )
 
 var (
-	sendCh chan *utils.Email
-	config string
+	dialer *gomail.Dialer
+	sendCh chan *gomail.Message
+	from   string
 )
 
 func init() {
@@ -18,14 +18,13 @@ func init() {
 	port, _ := beego.AppConfig.Int("mail.port")
 	username := beego.AppConfig.String("mail.user")
 	password := beego.AppConfig.String("mail.password")
-	from := beego.AppConfig.String("mail.from")
+	from = beego.AppConfig.String("mail.from")
 	if port == 0 {
 		port = 25
 	}
+	dialer = gomail.NewDialer(host, port, username, password)
 
-	config = fmt.Sprintf(`{"username":"%s","password":"%s","host":"%s","port":%d,"from":"%s"}`, username, password, host, port, from)
-
-	sendCh = make(chan *utils.Email, queueSize)
+	sendCh = make(chan *gomail.Message, queueSize)
 
 	go func() {
 		for {
@@ -34,7 +33,7 @@ func init() {
 				if !ok {
 					return
 				}
-				if err := m.Send(); err != nil {
+				if err := dialer.DialAndSend(m); err != nil {
 					beego.Error("SendMail:", err.Error())
 				}
 			}
@@ -43,16 +42,17 @@ func init() {
 }
 
 func SendMail(address, name, subject, content string, cc []string) bool {
-	mail := utils.NewEMail(config)
-	mail.To = []string{address}
-	mail.Subject = subject
-	mail.HTML = content
+	message := gomail.NewMessage()
+	message.SetHeader("From", from)
+	message.SetHeader("To", address)
+	message.SetHeader("Subject", subject)
+	message.SetBody("text/html", content)
 	if len(cc) > 0 {
-		mail.Cc = cc
+		message.SetHeader("Cc", cc...)
 	}
 
 	select {
-	case sendCh <- mail:
+	case sendCh <- message:
 		return true
 	case <-time.After(time.Second * 3):
 		return false
